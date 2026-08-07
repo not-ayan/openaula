@@ -1,0 +1,109 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-main: #0a0a0a;
+    --bg-card: #121212;
+    --bg-card-hover: #181818;
+    --border-card: #222222;
+    --border-subtle: #1a1a1a;
+  }
+
+  body {
+    background-color: #0a0a0a;
+    color: #ededed;
+    font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    min-height: 100vh;
+    margin: 0;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* Custom scrollbar matching OpenMouse theme */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: #0a0a0a;
+}
+::-webkit-scrollbar-thumb {
+  background: #222222;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #333333;
+}
+
+/* Concentric orbit circles for hardware view */
+.orbit-ring-1 {
+  width: 380px;
+  height: 380px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 50%;
+}
+.orbit-ring-2 {
+  width: 240px;
+  height: 240px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 50%;
+}
+
+/* OpenMouse Segment Button Active Style */
+.btn-segment-active {
+  background-color: #ffffff;
+  color: #000000;
+  font-weight: 700;
+  box-shadow: 0 2px 8px rgba(255, 255, 255, 0.15);
+}
+
+.btn-segment-inactive {
+  background-color: #181818;
+  color: #a1a1aa;
+  border: 1px solid #2a2a2a;
+}
+.btn-segment-inactive:hover {
+  background-color: #222222;
+  color: #ffffff;
+  border-color: #3f3f46;
+}
+
+/* Keycap tactile mechanical switch animation */
+.key-cap-tile {
+  background-color: #141414;
+  border: 1px solid #262626;
+  transition: transform 0.06s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.06s ease, border-color 0.06s ease, background-color 0.06s ease;
+  will-change: transform, box-shadow;
+}
+
+.key-cap-tile:hover {
+  background-color: #1f1f1f;
+  border-color: #52525b;
+}
+
+.key-cap-tile.selected {
+  background-color: #222222 !important;
+  border-color: #ffffff !important;
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.2);
+}
+
+/* Physical Switch Depress State */
+.key-cap-tile.pressed {
+  transform: translateY(3px) scale(0.97) !important;
+  border-color: #06b6d4 !important;
+  background-color: #162433 !important;
+  box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.8), 0 0 18px rgba(6, 182, 212, 0.6) !important;
+  color: #ffffff !important;
+  z-index: 20;
+}
+
+.key-cap-tile.modified {
+  border-color: #f59e0b !important;
+  background-color: rgba(245, 158, 11, 0.12) !important;
+}
+
+.key-cap-tile.fn-key {
+  border-color: #818cf8 !important;
+  background-color: rgba(99, 102, 241, 0.12) !important;
+}
