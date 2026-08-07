@@ -1,5 +1,6 @@
 # AULA F75 WebHID Configurator & Diagnostic Toolkit
 https://openaula.vercel.app/
+
 An open-source browser-based WebHID configuration tool and reverse-engineered driver interface for the **AULA F75** 75% mechanical keyboard (Telink MCU / EVVision controller, VID `0x258A`, PID `0x010C`).
 
 This web application operates directly over USB via the W3C WebHID API. It allows inspection, remapping, custom shortcut binding, state backing up, differential matrix analysis, and surgical recovery of corrupted key mappings (specifically physical Fn key and Windows key locks) without requiring proprietary desktop drivers.
