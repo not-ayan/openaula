@@ -584,7 +584,7 @@ class RgbControllerService {
     }
   }
 
-  // Send Direct Mode LED Frame (CMD 0x08, interleaved RGB for 122 keys)
+  // Send Direct Mode LED Frame (transmits both Planar CMD 0x06 and Direct CMD 0x08 for 122 keys)
   public async sendDirectFrame(colors: (RGBColor | null)[]): Promise<boolean> {
     if (!this.device || !this.device.opened || this.isSendingFrame) {
       return false;
@@ -592,25 +592,50 @@ class RgbControllerService {
 
     this.isSendingFrame = true;
     try {
-      const pkt = new Uint8Array(519);
-      pkt[0] = 0x08; // CMD: SET_LEDS_DIRECT
-      pkt[1] = 0x00;
-      pkt[2] = 0x00;
-      pkt[3] = 0x01;
-      pkt[4] = 0x00;
-      pkt[5] = 0x7a; // 122 keys
-      pkt[6] = 0x01;
+      // 1. Send Planar Frame (CMD 0x06) - native hardware per-key command supported across all AULA firmwares
+      const planarPkt = new Uint8Array(519);
+      planarPkt[0] = 0x06; // CMD: LED_PLANAR
+      planarPkt[1] = 0x00;
+      planarPkt[2] = 0x00;
+      planarPkt[3] = 0x01;
+      planarPkt[4] = 0x00;
+      planarPkt[5] = 0x7a; // 122 keys
+      planarPkt[6] = 0x01;
 
-      for (let i = 0; i < Math.min(colors.length, 122); i++) {
+      const planeR = 7;
+      const planeG = 7 + 126;
+      const planeB = 7 + 126 * 2;
+
+      for (let i = 0; i < 122; i++) {
         const c = colors[i] || { r: 0, g: 0, b: 0 };
-        pkt[7 + i * 3] = c.r;
-        pkt[7 + i * 3 + 1] = c.g;
-        pkt[7 + i * 3 + 2] = c.b;
+        planarPkt[planeR + i] = c.r;
+        planarPkt[planeG + i] = c.g;
+        planarPkt[planeB + i] = c.b;
       }
 
-      await this.device.sendFeatureReport(6, pkt);
+      await this.device.sendFeatureReport(6, planarPkt);
+
+      // 2. Also send Direct Frame (CMD 0x08) - OpenRGB direct mode interleaved format
+      const directPkt = new Uint8Array(519);
+      directPkt[0] = 0x08; // CMD: SET_LEDS_DIRECT
+      directPkt[1] = 0x00;
+      directPkt[2] = 0x00;
+      directPkt[3] = 0x01;
+      directPkt[4] = 0x00;
+      directPkt[5] = 0x7a; // 122 keys
+      directPkt[6] = 0x01;
+
+      for (let i = 0; i < 122; i++) {
+        const c = colors[i] || { r: 0, g: 0, b: 0 };
+        directPkt[7 + i * 3] = c.r;
+        directPkt[7 + i * 3 + 1] = c.g;
+        directPkt[7 + i * 3 + 2] = c.b;
+      }
+
+      await this.device.sendFeatureReport(6, directPkt);
       return true;
-    } catch {
+    } catch (err: any) {
+      webhid.log(`[RGB Frame Error] ${err.message}`);
       return false;
     } finally {
       this.isSendingFrame = false;
@@ -620,13 +645,13 @@ class RgbControllerService {
   // Start keepalive heartbeat (every 600ms) to maintain Direct Mode
   private startKeepalive() {
     this.stopKeepalive();
-    this.keepaliveTimer = setInterval(() => {
+    this.keepaliveTimer = setInterval(async () => {
       if (this.state.isDirectStreaming && this.device?.opened && !this.isSendingFrame) {
         const frame = new Array(122).fill(null).map((_, idx) => {
           const hex = this.state.perKeyColors[idx] || this.state.staticColor;
           return hexToRgb(hex);
         });
-        this.sendDirectFrame(frame);
+        await this.sendDirectFrame(frame);
       }
     }, 600);
   }
@@ -639,13 +664,52 @@ class RgbControllerService {
   }
 
   // Start built-in software animation stream
-  public startSoftwareAnimation(animType: 'matrix' | 'rainbow' | 'pulse' | 'fire') {
-    this.stopSoftwareAnimation();
+  public async startSoftwareAnimation(animType: 'matrix' | 'rainbow' | 'pulse' | 'fire') {
+    await this.stopSoftwareAnimation();
     this.notify({
       activeSoftwareAnim: animType,
       isDirectStreaming: true,
       customMode: false,
     });
+
+    webhid.log(`[RGB] Initializing software streaming for '${animType}'...`);
+
+    // Prepare hardware: switch keyboard into Custom Streaming Mode (0x12) so internal hardware shaders pause
+    if (this.device && this.device.opened) {
+      try {
+        // Attempt Report 0x39 / 0x3C direct mode unlock sequence (if supported by device descriptor)
+        try {
+          await this.device.sendFeatureReport(0x39, new Uint8Array([0x20, 0x06, 0x00, 0x01, 0x00]));
+        } catch {}
+        try {
+          await this.device.sendFeatureReport(0x3c, new Uint8Array([0x20, 0x01, 0x00]));
+        } catch {}
+
+        // Set custom_flag = 1, effect_id = 18 (0x12) via CMD 0x04 to pause internal MCU hardware animations
+        const freshConfig = await this.readDeviceConfig(true);
+        const cfgPkt = new Uint8Array(519);
+        cfgPkt[0] = 0x04;
+        cfgPkt[3] = 0x01;
+        cfgPkt[5] = 0x80;
+
+        const baseline = freshConfig || this.cachedConfig;
+        if (baseline) {
+          const copyLen = Math.min(baseline.length - 7, 519 - 7);
+          for (let i = 0; i < copyLen; i++) {
+            cfgPkt[7 + i] = baseline[7 + i];
+          }
+        }
+
+        cfgPkt[16] = 0x01; // custom_flag = 1 (enables external custom / streaming frames)
+        cfgPkt[17] = 0x12; // effect 18 (custom render mode)
+
+        await this.device.sendFeatureReport(6, cfgPkt);
+        await new Promise((r) => setTimeout(r, 25));
+        webhid.log(`[RGB] Keyboard MCU switched to Custom Streaming Mode.`);
+      } catch (err: any) {
+        webhid.log(`[RGB Warning] Could not set custom streaming mode: ${err.message}`);
+      }
+    }
 
     let tick = 0;
     const intervalMs = 45; // ~22 FPS
@@ -710,10 +774,10 @@ class RgbControllerService {
     }, intervalMs);
 
     this.startKeepalive();
-    webhid.log(`[RGB] Software animation '${animType}' started.`);
+    webhid.log(`[RGB] Software animation '${animType}' streaming active.`);
   }
 
-  public stopSoftwareAnimation() {
+  public async stopSoftwareAnimation() {
     if (this.animInterval) {
       clearInterval(this.animInterval);
       this.animInterval = null;
@@ -723,7 +787,7 @@ class RgbControllerService {
       this.notify({ activeSoftwareAnim: null, isDirectStreaming: false });
       webhid.log('[RGB] Software animation stopped, restoring hardware lighting.');
       // Restore the stored hardware effect
-      this.setHardwareEffect(this.state.effectId);
+      await this.setHardwareEffect(this.state.effectId);
     }
   }
 }

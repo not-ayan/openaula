@@ -142,6 +142,99 @@ Below is the verified mapping between physical keycaps and matrix indices:
 
 ---
 
+## RGB Lighting Protocol & Architecture
+
+The AULA F75 utilizes a SinoWealth/BYK controller with a dedicated hardware LED rendering engine capable of standalone hardware effects, persistent per-key profiles, and real-time software animation streaming.
+
+### 1. Verified Hardware Lighting Effects
+
+The controller firmware includes 15 built-in hardware animation shaders:
+
+| Effect ID | Effect Name | Lighting Type | Color Capable | Firmware Description |
+| :---: | :--- | :--- | :---: | :--- |
+| `0` | **Off** | None | No | Disables all key LEDs |
+| `1` | **Static Color** | Solid | Yes | Permanent solid illumination across all keys |
+| `2` | **Single Breathing** | Dynamic | Yes | Smooth breathing fade pulse with selected palette color |
+| `3` | **Rainbow Wave** | Spectrum | No | Multi-color continuous spectrum wave across the keybed |
+| `4` | **Aurora Ripple** | Dynamic | Yes | Flowing ribbon aurora pattern |
+| `5` | **Twinkle Stars** | Reactive | Yes | Random twinkling keys mimicking a starry night |
+| `6` | **Neon Stream** | Spectrum | No | High-speed multi-colored neon bands |
+| `7` | **Reactive Fade** | Reactive | Yes | Pressed keys light up and smoothly extinguish |
+| `8` | **Ripple Splash** | Reactive | Yes | Expanding concentric circle waves radiating from pressed keys |
+| `9` | **Starry Blink** | Reactive | No | Multi-colored reactive sparkling on keypress |
+| `10` | **Sine Wave** | Dynamic | Yes | Undulating sine-wave oscillation across keyboard columns |
+| `11` | **Spotlight** | Dynamic | Yes | Moving spotlight illuminating key clusters |
+| `12` | **Neon Marquee** | Dynamic | Yes | Smooth traveling marquee band traversing key rows |
+| `13` | **Snake Trail** | Dynamic | Yes | S-curving serpentine light trail winding through rows |
+| `14` | **Spiral Rainbow** | Spectrum | No | Rotating multi-spectral vortex centered on the keyboard |
+
+---
+
+### 2. The 4-Step SinoWealth Hardware Commit Sequence
+
+Committing a hardware effect or color change requires an atomic 4-step sequence to avoid race conditions with the microcontroller's internal animation loop:
+
+```mermaid
+sequenceDiagram
+    participant Host as Browser (WebHID)
+    participant MCU as AULA F75 MCU
+    Host->>MCU: Step 1: CMD 0x0A (Send Custom Color Profile, 519 bytes)
+    Host->>MCU: Step 2: CMD 0x84 (Send Config Handshake Trigger)
+    Note over Host,MCU: Step 3: Hardware Settling Delay (~40ms)
+    Host->>MCU: Step 4: CMD 0x04 (Commit Config Write with Effect ID & Speed/Brightness)
+```
+
+1. **Step 1 — CMD `0x0A` (Color Profile Write):**
+   Sends a 519-byte report defining the active color palette across 14 hardware LED groups.
+2. **Step 2 — CMD `0x84` (Config Handshake Trigger):**
+   Sends a configuration synchronization handshake report (`[0x84, 0, 0, 1, 0, 0x80]`), priming the MCU's internal EEPROM write registers.
+3. **Step 3 — Hardware Settling Delay:**
+   A mandatory 40ms pause ensuring the MCU finishes internal memory bus arbitration before accepting writes.
+4. **Step 4 — CMD `0x04` (Config Write):**
+   Writes back the modified 519-byte configuration payload containing `effect_id` at byte offset 17 (wire offset 18), brightness (1–4), speed (0–4), and the custom effect flag.
+
+---
+
+### 3. Hardware LED Memory Map & 21-Byte Register Gaps
+
+The AULA F75 physical matrix contains 98 hardware LED positions grouped into 14 logical 7-LED clusters (21 bytes each: $7 \times 3$ RGB). To prevent corruption of adjacent matrix scanning registers, color profiles must adhere to exact 21-byte hardware zero-padding gaps:
+
+```
+[Report ID 6 Header] (Bytes 0-27)
+  ├── Group 1-5   (Bytes 28-132)  : 35 LEDs (105 bytes)
+  ├── GAP 1       (Bytes 133-153) : 21 bytes zero-padding (Protects Matrix Registers)
+  ├── Group 6-7   (Bytes 154-195) : 14 LEDs (42 bytes)
+  ├── GAP 2       (Bytes 196-216) : 21 bytes zero-padding
+  ├── Group 8-11  (Bytes 217-300) : 28 LEDs (84 bytes)
+  ├── GAP 3       (Bytes 301-321) : 21 bytes zero-padding
+  ├── Group 12-14 (Bytes 322-384) : 21 LEDs (63 bytes)
+  ├── Trailing 0s (Bytes 385-512) : 128 bytes zero-padding
+  └── Terminator  (Bytes 513-514) : 0x5A, 0xA5
+```
+
+---
+
+### 4. Per-Key Planar Canvas (CMD `0x06`)
+
+Individual per-key illumination operates via **Planar RGB encoding** (Report ID 6, CMD `0x06`):
+- **Red Plane:** Offset 7 to 132 (126 bytes)
+- **Green Plane:** Offset 133 to 258 (126 bytes)
+- **Blue Plane:** Offset 259 to 384 (126 bytes)
+
+Following the planar packet upload, a CMD `0x04` configuration packet is written with `custom_flag = 0x01` and `effect_id = 0x12` (18), instructing the MCU to render the custom planar frame buffer permanently to flash.
+
+---
+
+### 5. High-Framerate Software Streaming Animation Engine
+
+The software-driven animation engine streams real-time frames directly from the browser to the keyboard:
+- **Hardware Shader Disablement:** On stream start, CMD `0x04` sets `custom_flag = 1, effect_id = 18`, safely pausing the MCU's internal autonomous shader loop so it does not overwrite host frames.
+- **Dual Transmission:** Each frame transmits both **Planar CMD `0x06`** and **Direct CMD `0x08`** (interleaved RGB) ensuring complete compatibility across both official Aula firmwares and OpenRGB-compatible builds.
+- **Keepalive Heartbeat:** Automated 600ms keepalive updates prevent the keyboard from timing out back to stock lighting while streaming is active.
+- **Graceful Restoration:** Stopping the stream automatically restores the previously selected hardware effect without requiring keyboard reconnection.
+
+---
+
 ## Application Structure & Architecture
 
 ```
@@ -150,18 +243,20 @@ aula-f75-web/
 │   ├── components/
 │   │   ├── Sidebar.tsx           # Navigation sidebar with status badges
 │   │   ├── Header.tsx            # Main top bar with live connection state
-│   │   ├── KeyboardGrid.tsx      # Interactive 75% mechanical grid visualizer
+│   │   ├── KeyboardGrid.tsx      # Interactive 75% mechanical grid visualizer & LED preview
 │   │   ├── Overview.tsx          # Main hardware matrix view & status cards
 │   │   ├── KeyRemapPanel.tsx     # Remap inspector, combo encoder & preset picker
+│   │   ├── RgbControlPanel.tsx   # 3-tab lighting studio (Hardware, Per-Key Canvas, Software Stream)
 │   │   ├── FnWinRepairWidget.tsx # Surgical Fn/Win quick repair toolkit
 │   │   ├── BackupPanel.tsx       # Baseline exporter, raw dump restore & A↔B diff tool
 │   │   ├── LogViewer.tsx         # Real-time WebHID telemetry & packet console
 │   │   └── LiveInputWidget.tsx   # Real-time keypress matrix detector
 │   ├── services/
 │   │   ├── webhid.ts             # WebHIDController class, Feature Report I/O & diffing
+│   │   ├── rgbService.ts         # SinoWealth RGB controller, planar encoder & animation engine
 │   │   └── inputManager.ts       # Central DOM keyboard event listener & state sync
 │   ├── types/
-│   │   └── hid.ts                # Key definitions, usage lookup tables & bitmasks
+│   │   └── hid.ts                # Key definitions, usage lookup tables, RGB presets & bitmasks
 │   ├── App.tsx                   # Main layout container & tab router
 │   ├── main.tsx                  # React entry point
 │   └── index.css                 # Design tokens & tactile key animations
@@ -224,15 +319,34 @@ npm run build
    - **Preset Shortcuts:** Single-click productivity presets (`Cut`, `Copy`, `Paste`, `Undo`, `Select All`).
 3. Click **Apply Remap**. The application writes Table 0 to the device and verifies the write via a read-back check.
 
-### 3. Surgical Fn & Windows Key Repair
+### 3. RGB Lighting & Animation Studio
+Open the **RGB Studio** tab to access three dedicated lighting engines:
+- **Tab 1 — Hardware Effects:** Switch between 15 built-in hardware shaders, tune speed (0–4) and brightness (1–4), and select vibrant saturated color presets with zero unwanted color bleed.
+- **Tab 2 — Per-Key Canvas:** Paint individual keys on the 75% interactive visualizer, use curated Gamer / Rainbow presets, and save the custom layout permanently to keyboard flash (CMD `0x06`).
+- **Tab 3 — Software Streaming:** Run dynamic software-driven animations (**Matrix Code Rain**, **Smooth Prism Sweep**, **Bioluminescent Pulse**, **Inferno Embers**) streaming directly over WebHID.
+
+### 4. Surgical Fn & Windows Key Repair
 If the physical Fn key or Windows key stops working due to corrupted keymaps:
 - Open the **Backup & Recovery** tab or use the repair widget on the Overview screen.
 - Click **Run Surgical Fn Recovery**. This writes `[13, 0, 0, 0]` strictly to Matrix `#53` without resetting your custom layout.
 - Click **Reset Win Key** to restore Matrix `#11` to `0xE3`.
 
-### 4. Matrix Dumps & Differential Analysis
+### 5. Matrix Dumps & Differential Analysis
 - **Capture Baseline:** Click **Capture Factory Baseline** to download a clean `KNOWN_GOOD_FACTORY_WINDOWS.json` backup containing checksums and matrix data.
 - **Diff Tool:** Capture State A (Windows mode) and State B (Mac mode) to run a byte-for-byte differential analysis across all 1024 bytes to inspect hardware mode flags.
+
+---
+
+## Acknowledgments & Upstream References
+
+This project builds upon reverse-engineering research and protocol implementations from the open-source community:
+
+- **[veysiemrah/aula-rgb-controller](https://github.com/veysiemrah/aula-rgb-controller)** by **Veysi Emrah**:
+  - Foundational reverse engineering of the SinoWealth / AULA F87 / F75 lighting protocol.
+  - Discovery of the 4-step hardware write sequence (`0x0A` $\to$ `0x84` $\to$ `0x04`), planar RGB memory layout (CMD `0x06`), 14-group LED gap alignments, and direct mode handshakes.
+- **[rodrigost23/OpenRGB](https://gitlab.com/rodrigost23/OpenRGB)** (and the upstream [OpenRGB](https://openrgb.org/) project) by **Rodrigo Tavares**:
+  - Implementation of the `SinowealthKeyboard10cController`, `SinowealthKeyboard10cDevices`, and `RGBController_SinowealthKeyboard10c` drivers for SinoWealth PID `0x010C` devices.
+  - Key mapping coordinates for the 122-key physical LED buffer, Direct LED streaming command (`0x08`), and keepalive heartbeat architecture.
 
 ---
 

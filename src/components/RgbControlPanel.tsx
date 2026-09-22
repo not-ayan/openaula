@@ -807,7 +807,7 @@ export const RgbControlPanel: React.FC<RgbControlPanelProps> = ({ isConnected })
                 </h3>
                 <p className="text-xs text-zinc-400 max-w-xl">
                   Stream high-framerate dynamic lighting frames directly to your keyboard via WebHID
-                  Feature Reports (CMD 0x08 with automated 600ms keepalive heartbeat).
+                  Feature Reports (Dual Planar CMD 0x06 & Direct CMD 0x08 with automated keepalive heartbeat).
                 </p>
               </div>
 
