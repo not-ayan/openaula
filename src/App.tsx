@@ -8,9 +8,11 @@ import { LogViewer } from './components/LogViewer';
 import { Overview } from './components/Overview';
 import { LiveInputWidget } from './components/LiveInputWidget';
 import { FnWinRepairWidget } from './components/FnWinRepairWidget';
+import { RgbControlPanel } from './components/RgbControlPanel';
 import { webhid, PRISTINE_STAGE5_MATRIX, type WebHIDState } from './services/webhid';
 import { parseKeyRecordUsage, type KeyRecord } from './types/hid';
 import { inputManager } from './services/inputManager';
+import { rgbService } from './services/rgbService';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<string>('overview');
@@ -70,6 +72,7 @@ export function App() {
     const success = await webhid.connect();
     if (success && (webhid as any).device) {
       inputManager.attachWebHIDDevice((webhid as any).device);
+      rgbService.attachDevice((webhid as any).device);
     }
   };
 
@@ -195,6 +198,10 @@ export function App() {
                 onResetAll={handleResetAll}
               />
             </div>
+          )}
+
+          {activeTab === 'rgb' && (
+            <RgbControlPanel isConnected={hidState.isConnected} />
           )}
 
           {activeTab === 'backup' && (

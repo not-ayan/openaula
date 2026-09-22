@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { AULA_F75_LAYOUT, HID_USAGES, formatComboLabel, type KeyDefinition, type KeyRecord } from '../types/hid';
+import { AULA_F75_LAYOUT, HID_USAGES, formatComboLabel, type KeyDefinition, type KeyRecord, type RgbConfigState } from '../types/hid';
 import { inputManager } from '../services/inputManager';
+import { rgbService } from '../services/rgbService';
 
 interface KeyboardGridProps {
   selectedMatrixIdx: number | null;
@@ -15,12 +16,19 @@ export const KeyboardGrid: React.FC<KeyboardGridProps> = ({
 }) => {
   const rows = [0, 1, 2, 3, 4, 5];
   const [pressedIndices, setPressedIndices] = useState<Set<number>>(new Set());
+  const [rgbState, setRgbState] = useState<RgbConfigState>(rgbService.getState());
 
   useEffect(() => {
-    const unsubscribe = inputManager.subscribe((pressed) => {
+    const unsubscribeInput = inputManager.subscribe((pressed) => {
       setPressedIndices(new Set(pressed));
     });
-    return unsubscribe;
+    const unsubscribeRgb = rgbService.subscribe((state) => {
+      setRgbState(state);
+    });
+    return () => {
+      unsubscribeInput();
+      unsubscribeRgb();
+    };
   }, []);
 
   const getUsageLabel = (hidUsage: number) => {
@@ -69,8 +77,14 @@ export const KeyboardGrid: React.FC<KeyboardGridProps> = ({
 
               const widthPx = (keyDef.width || 1) * 38 + ((keyDef.width || 1) - 1) * 6;
               const displayLabel = keyDef.label;
-              const comboLabel = record ? formatComboLabel(record.bytes) : displayLabel;
+              const comboLabel = record && record.bytes ? formatComboLabel(record.bytes) : displayLabel;
               const currentUsageLabel = isModified ? comboLabel : (currentUsage !== null ? getUsageLabel(currentUsage) : displayLabel);
+              const keyRgb =
+                rgbState.perKeyColors[keyDef.matrixIdx] ||
+                ((!rgbState.colorful || rgbState.effectId === 1) && rgbState.effectId !== 0
+                  ? rgbState.staticColor
+                  : null);
+              const hasRgbGlow = Boolean(keyRgb && keyRgb !== '#000000');
 
               return (
                 <button
@@ -79,6 +93,12 @@ export const KeyboardGrid: React.FC<KeyboardGridProps> = ({
                   style={{
                     width: `${widthPx}px`,
                     left: `${keyDef.col * 43}px`,
+                    ...(hasRgbGlow && !isPressed && !isSelected
+                      ? {
+                          borderColor: `${keyRgb}88`,
+                          boxShadow: `0 0 10px ${keyRgb}30`,
+                        }
+                      : {}),
                   }}
                   className={`key-cap-tile absolute top-0 bottom-0 rounded-lg p-1 flex flex-col justify-between items-start text-left select-none ${
                     isPressed
