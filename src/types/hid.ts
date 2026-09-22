@@ -121,10 +121,11 @@ export const DEFAULT_MATRIX_USAGES: Record<number, number> = {
 };
 
 // Decode 4-byte matrix record into logical HID usage (simple single-usage view)
-export function parseKeyRecordUsage(bytes: [number, number, number, number]): number {
+export function parseKeyRecordUsage(bytes: [number, number, number, number] | undefined | null): number {
+  if (!bytes || bytes.length < 4) return 0;
   if (bytes[0] === 13) return 0xFF;  // Fn Key
   // If it's a combo (modifier + key), return the key part for display
-  if (bytes[1] !== 0 && bytes[3] !== 0) return bytes[3]; // Combo — show key part
+  if (bytes[1] !== 0 && bytes[3] !== 0) return bytes[3] || 0; // Combo — show key part
   if (bytes[1] === 0x01) return 0xE0; // Left Control
   if (bytes[1] === 0x02) return 0xE1; // Left Shift
   if (bytes[1] === 0x04) return 0xE2; // Left Alt
@@ -133,17 +134,28 @@ export function parseKeyRecordUsage(bytes: [number, number, number, number]): nu
   if (bytes[1] === 0x20) return 0xE5; // Right Shift
   if (bytes[1] === 0x40) return 0xE6; // Right Alt
   if (bytes[1] === 0x80) return 0xE7; // Right GUI / Win
-  return bytes[3]; // Standard Key Usage (e.g. 0x04 for A, 0x14 for Q, 0x0E for K)
+  return bytes[3] || 0; // Standard Key Usage (e.g. 0x04 for A, 0x14 for Q, 0x0E for K)
 }
 
 // Parse full combo info from 4-byte record
-export function parseComboRecord(bytes: [number, number, number, number]): ComboRecord {
+export function parseComboRecord(bytes: [number, number, number, number] | undefined | null): ComboRecord {
+  if (!bytes || bytes.length < 4) {
+    return {
+      modifiers: 0,
+      keyUsage: 0,
+      isFnKey: false,
+      isCombo: false,
+      isModifierOnly: false,
+    };
+  }
+  const mod = typeof bytes[1] === 'number' && !isNaN(bytes[1]) ? bytes[1] : 0;
+  const key = typeof bytes[3] === 'number' && !isNaN(bytes[3]) ? bytes[3] : 0;
   return {
-    modifiers: bytes[1],
-    keyUsage: bytes[3],
+    modifiers: mod,
+    keyUsage: key,
     isFnKey: bytes[0] === 13,
-    isCombo: bytes[1] !== 0 && bytes[3] !== 0,
-    isModifierOnly: bytes[1] !== 0 && bytes[3] === 0,
+    isCombo: mod !== 0 && key !== 0,
+    isModifierOnly: mod !== 0 && key === 0,
   };
 }
 
@@ -172,13 +184,14 @@ export function getModifierLabels(modBitmask: number): string[] {
 }
 
 // Format combo record as user-friendly label like "Ctrl+Shift+C"
-export function formatComboLabel(bytes: [number, number, number, number]): string {
+export function formatComboLabel(bytes: [number, number, number, number] | undefined | null): string {
+  if (!bytes || bytes.length < 4) return 'Default';
   const combo = parseComboRecord(bytes);
   if (combo.isFnKey) return 'Fn Key';
   
   const parts: string[] = getModifierLabels(combo.modifiers);
   
-  if (combo.keyUsage !== 0) {
+  if (combo.keyUsage !== 0 && typeof combo.keyUsage === 'number' && !isNaN(combo.keyUsage)) {
     const keyLabel = HID_USAGES.find(u => u.usage === combo.keyUsage)?.label 
       || `0x${combo.keyUsage.toString(16).toUpperCase()}`;
     parts.push(keyLabel);
@@ -437,3 +450,94 @@ export const SHORTCUT_PRESETS = [
   { label: 'Alt+F4', modifiers: MOD_LALT, key: 0x3D, desc: 'Alt + F4' },
   { label: 'Alt+Tab', modifiers: MOD_LALT, key: 0x2B, desc: 'Alt + Tab' },
 ];
+
+// ==========================================
+// RGB LIGHTING ARCHITECTURE & DEFINITIONS
+// ==========================================
+
+export interface RGBColor {
+  r: number;
+  g: number;
+  b: number;
+}
+
+export interface RgbHardwareEffect {
+  id: number;
+  name: string;
+  category: 'motion' | 'reactive' | 'ambient' | 'static' | 'special';
+  description: string;
+  hasSpeed: boolean;
+  hasBrightness: boolean;
+  hasColor: boolean;
+}
+
+export const AULA_RGB_EFFECTS: RgbHardwareEffect[] = [
+  { id: 3, name: 'Rainbow Wave', category: 'motion', description: 'Fluid multi-color spectrum wave across all keys', hasSpeed: true, hasBrightness: true, hasColor: false },
+  { id: 1, name: 'Static Color', category: 'static', description: 'Single uniform color across all keys', hasSpeed: false, hasBrightness: true, hasColor: true },
+  { id: 2, name: 'Breathing', category: 'ambient', description: 'Smooth pulsating illumination in chosen or random colors', hasSpeed: true, hasBrightness: true, hasColor: true },
+  { id: 4, name: 'Spectrum', category: 'ambient', description: 'Full board cyclical spectrum color transition', hasSpeed: true, hasBrightness: true, hasColor: true },
+  { id: 5, name: 'Rain', category: 'motion', description: 'Digital raindrops trickling down keyboard columns', hasSpeed: true, hasBrightness: true, hasColor: true },
+  { id: 7, name: 'Ripple', category: 'reactive', description: 'Circular water ripple spreading outward from keypress', hasSpeed: true, hasBrightness: true, hasColor: true },
+  { id: 8, name: 'Starlight', category: 'ambient', description: 'Random twinkling stars across keyboard', hasSpeed: true, hasBrightness: true, hasColor: true },
+  { id: 10, name: 'Snake', category: 'motion', description: 'Serpentine illuminated trail weaving through rows', hasSpeed: true, hasBrightness: true, hasColor: true },
+  { id: 11, name: 'Aurora', category: 'motion', description: 'Shifting northern lights atmospheric wave', hasSpeed: true, hasBrightness: true, hasColor: true },
+  { id: 12, name: 'Reactive', category: 'reactive', description: 'Single pressed key illuminates instantly and fades', hasSpeed: true, hasBrightness: true, hasColor: true },
+  { id: 13, name: 'Marquee', category: 'motion', description: 'Smooth moving marquee bands of light', hasSpeed: true, hasBrightness: true, hasColor: true },
+  { id: 15, name: 'Circle Wave', category: 'motion', description: 'Concentric circular waves radiating from center', hasSpeed: true, hasBrightness: true, hasColor: false },
+  { id: 16, name: 'Rain Down', category: 'motion', description: 'Downward vertical cascading light wave', hasSpeed: true, hasBrightness: true, hasColor: false },
+  { id: 17, name: 'Center Ripple', category: 'motion', description: 'Pulsing horizontal waves spreading from center', hasSpeed: true, hasBrightness: true, hasColor: false },
+  { id: 0, name: 'Off / Sleep', category: 'static', description: 'Turn off all keyboard LEDs completely', hasSpeed: false, hasBrightness: false, hasColor: false },
+];
+
+export interface SideLightOption {
+  id: number;
+  label: string;
+}
+
+export const AULA_SIDE_LIGHT_MODES: SideLightOption[] = [
+  { id: 0, label: 'Off / Battery Indicator' },
+  { id: 1, label: 'Rainbow Stream' },
+  { id: 2, label: 'Breathing Mixed' },
+  { id: 3, label: 'Static Red' },
+  { id: 4, label: 'Breathing Red' },
+];
+
+export interface RgbConfigState {
+  effectId: number;
+  brightness: number; // 1 to 4 (or 0 for off)
+  speed: number;      // 0 to 4
+  colorful: boolean;  // multi-color / random vs single color
+  staticColor: string; // #RRGGBB
+  sideLightMode: number; // 0 to 4
+  customMode: boolean; // Custom per-key mode active
+  isDirectStreaming: boolean;
+  activeSoftwareAnim: string | null;
+  perKeyColors: Record<number, string>; // matrixIdx -> #RRGGBB
+}
+
+export const DEFAULT_RGB_STATE: RgbConfigState = {
+  effectId: 3, // Rainbow wave
+  brightness: 4, // Max
+  speed: 2,     // Medium
+  colorful: true,
+  staticColor: '#00e5ff',
+  sideLightMode: 0, // Off
+  customMode: false,
+  isDirectStreaming: false,
+  activeSoftwareAnim: null,
+  perKeyColors: {},
+};
+
+export const COLOR_PRESETS = [
+  { label: 'Cyber Cyan', hex: '#00e5ff' },
+  { label: 'True Blue', hex: '#0066ff' },
+  { label: 'Matrix Green', hex: '#00ff66' },
+  { label: 'Neon Magenta', hex: '#ff007f' },
+  { label: 'Amber Gold', hex: '#ffb300' },
+  { label: 'Pure White', hex: '#ffffff' },
+  { label: 'Royal Violet', hex: '#7000ff' },
+  { label: 'Crimson Red', hex: '#ff1744' },
+  { label: 'Vivid Orange', hex: '#ff6d00' },
+  { label: 'Ice Blue', hex: '#00d4ff' },
+];
+
